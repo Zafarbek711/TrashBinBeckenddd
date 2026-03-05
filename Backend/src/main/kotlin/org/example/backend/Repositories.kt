@@ -11,5 +11,5 @@ interface TrashBinRepository : JpaRepository<TrashBin, Long> {
 
 interface UserRepository : JpaRepository<User, Long>{
     fun findByUsername(username: String): User?
-
+    fun findByRole(role: Role): List<User>
 }

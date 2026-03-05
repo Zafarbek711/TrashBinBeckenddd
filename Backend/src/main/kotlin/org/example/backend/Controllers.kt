@@ -104,7 +104,8 @@ class TrashbinController(
 @RestController
 @RequestMapping("/api/users")
 class UserController(
-    private val service: UserService
+    private val service: UserService,
+    private val userRepository: UserRepository
 ) {
 
     // Faqat SUPER_ADMIN user yaratadi
@@ -137,6 +138,11 @@ class UserController(
     fun delete(@PathVariable id: Long): ResponseEntity<Void> {
         service.delete(id)
         return ResponseEntity.noContent().build()
+    }
+    @GetMapping("/drivers")
+    fun getDrivers(): List<UserResponseDto> {
+        return userRepository.findByRole(Role.DRIVER)
+            .map { UserResponseDto.from(it) }
     }
 }
 
@@ -198,3 +204,4 @@ class MyTelegramBot(
         }
     }
 }
+
