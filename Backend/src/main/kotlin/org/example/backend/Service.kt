@@ -41,6 +41,9 @@ interface UserService {
     fun getAll(pageable: Pageable): Page<UserResponseDto>
     fun getById(id: Long): UserResponseDto
     fun delete(id: Long)
+
+    fun getDrivers(): List<UserResponseDto>
+    fun getAdmins(): List<UserResponseDto>
 }
 
 
@@ -216,6 +219,16 @@ class UserServiceImpl(
             ?: throw NotFoundException("User with id $id not found")
         repository.delete(user)
     }
+    override fun getDrivers(): List<UserResponseDto> {
+        return repository.findByRole(Role.DRIVER)
+            .map { UserResponseDto.from(it) }
+    }
+
+    override fun getAdmins(): List<UserResponseDto> {
+        return repository.findByRole(Role.ADMIN)
+            .map { UserResponseDto.from(it) }
+    }
+
 }
 
 @Service
@@ -225,26 +238,25 @@ class TrashBinServiceImpl(
     private val telegramService: TelegramService,
     private val userRepository: UserRepository,
 
-) : TrashBinService {
+    ) : TrashBinService {
+
     override fun create(request: TrashBinCreateDto): TrashBinResponseDto {
 
-        val driver = userRepository.findById(request.driverId)
-            .orElseThrow { RuntimeException("Driver not found") }
+        val drivers = userRepository.findAllById(request.driverIds)
 
         val bin = TrashBin(
             name = request.name,
+            cameraId = request.cameraId,
             latitude = request.latitude,
             longitude = request.longitude,
             fillLevel = request.fillLevel,
-            cameraId = request.cameraId,
-            driver = driver
+            drivers = drivers.toMutableList()
         )
 
         bin.updateFillLevel(request.fillLevel)
 
         return TrashBinResponseDto.from(repository.save(bin))
     }
-
     override fun update(id: Long, request: TrashBinUpdateDto): TrashBinResponseDto {
 
         val bin = repository.findByIdOrNull(id)
@@ -268,7 +280,7 @@ class TrashBinServiceImpl(
         val bin = repository.findByIdOrNull(id)
             ?: throw NotFoundException("TrashBin with id $id not found")
 
-        val previousStatus = bin.status   // 🔥 MUHIM
+        val previousStatus = bin.status
 
         bin.updateFillLevel(fillLevel)
 
@@ -307,10 +319,11 @@ class TrashBinServiceImpl(
         val role = auth.authorities.first().authority
 
         if (role == "ROLE_DRIVER") {
+
             val driver = userRepository.findByUsername(username)
                 ?: throw RuntimeException("Driver not found")
 
-            return repository.findByDriver(driver, pageable)
+                return repository.findByDriversContaining(driver, pageable)
                 .map { TrashBinResponseDto.from(it) }
         }
 
@@ -323,42 +336,37 @@ class TrashBinServiceImpl(
         val bin = repository.findByCameraId(request.cameraId)
             ?: throw RuntimeException("Trash bin not found")
 
-        // Fill level ni yangilaymiz
         val fillLevel = if (request.isFull) 95 else 10
         bin.updateFillLevel(fillLevel)
 
-        // 🔥 FAQAT AI FULL YUBORGANDA XABAR YUBORAMIZ
         if (request.isFull) {
 
-            val driver = bin.driver
-            val chatId = driver?.telegramChatId
+            bin.drivers.forEach { driver ->
 
-            if (chatId != null) {
+                val chatId = driver.telegramChatId
 
-                bin.fullDetectedAt = LocalDateTime.now()
-                bin.acknowledged = false
-                bin.escalatedToAdmin = false
-                bin.escalatedToSuperAdmin = false
+                if (chatId != null) {
 
-                telegramService.sendFullBinNotification(
-                    chatId = chatId,
-                    binId = bin.id!!,
-                    binName = bin.name,
-                    fillLevel = bin.fillLevel,
-                    lat = bin.latitude,
-                    lon = bin.longitude
-                )
+                    bin.fullDetectedAt = LocalDateTime.now()
+                    bin.acknowledged = false
+                    bin.escalatedToAdmin = false
+                    bin.escalatedToSuperAdmin = false
 
-                println("✅ AI FULL — DRIVERGA XABAR YUBORILDI")
-            } else {
-                println("❌ Driver telegramChatId NULL")
+                    telegramService.sendFullBinNotification(
+                        chatId = chatId,
+                        binId = bin.id!!,
+                        binName = bin.name,
+                        fillLevel = bin.fillLevel,
+                        lat = bin.latitude,
+                        lon = bin.longitude
+                    )
+                }
             }
         }
 
         return TrashBinResponseDto.from(bin)
     }
 
-    //        request.imageBase64?.let {
     private fun checkAndNotifyIfFull(bin: TrashBin, previousStatus: BinStatus?) {
 
         println("PREVIOUS STATUS: $previousStatus")
@@ -374,26 +382,203 @@ class TrashBinServiceImpl(
             return
         }
 
-        val driver = bin.driver ?: return
-        val chatId = driver.telegramChatId ?: return
-
         bin.fullDetectedAt = LocalDateTime.now()
         bin.acknowledged = false
         bin.escalatedToAdmin = false
         bin.escalatedToSuperAdmin = false
 
-        telegramService.sendFullBinNotification(
-            chatId = chatId,
-            binId = bin.id!!,
-            binName = bin.name,
-            fillLevel = bin.fillLevel,
-            lat = bin.latitude,
-            lon = bin.longitude
-        )
+        bin.drivers.forEach { driver ->
 
-        println("✅ DRIVERGA CHIROYLI XABAR YUBORILDI")
+            val chatId = driver.telegramChatId ?: return@forEach
+
+            telegramService.sendFullBinNotification(
+                chatId = chatId,
+                binId = bin.id!!,
+                binName = bin.name,
+                fillLevel = bin.fillLevel,
+                lat = bin.latitude,
+                lon = bin.longitude
+            )
+        }
+
+        println("✅ DRIVERLARGA XABAR YUBORILDI")
     }
 }
+
+//@Service
+//@Transactional
+//class TrashBinServiceImpl(
+//    private val repository: TrashBinRepository,
+//    private val telegramService: TelegramService,
+//    private val userRepository: UserRepository,
+//
+//) : TrashBinService {
+//    override fun create(request: TrashBinCreateDto): TrashBinResponseDto {
+//
+//        val drivers = userRepository.findAllById(request.driverIds)
+//
+//        val bin = TrashBin(
+//            name = request.name,
+//            latitude = request.latitude,
+//            longitude = request.longitude,
+//            fillLevel = request.fillLevel,
+//            cameraId = request.cameraId,
+//            drivers = drivers.toMutableList()
+//        )
+//
+//        bin.updateFillLevel(request.fillLevel)
+//
+//        return TrashBinResponseDto.from(repository.save(bin))
+//    }
+//
+//    override fun update(id: Long, request: TrashBinUpdateDto): TrashBinResponseDto {
+//
+//        val bin = repository.findByIdOrNull(id)
+//            ?: throw NotFoundException("Trashbin with id $id not found")
+//
+//        request.name?.let { bin.name = it }
+//        request.latitude?.let { bin.latitude = it }
+//        request.longitude?.let { bin.longitude = it }
+//
+//        request.fillLevel?.let {
+//            val previousStatus = bin.status
+//            bin.updateFillLevel(it)
+//            checkAndNotifyIfFull(bin, previousStatus)
+//        }
+//
+//        return TrashBinResponseDto.from(bin)
+//    }
+//
+//    override fun updateFillLevel(id: Long, fillLevel: Int): TrashBinResponseDto {
+//
+//        val bin = repository.findByIdOrNull(id)
+//            ?: throw NotFoundException("TrashBin with id $id not found")
+//
+//        val previousStatus = bin.status   // 🔥 MUHIM
+//
+//        bin.updateFillLevel(fillLevel)
+//
+//        checkAndNotifyIfFull(bin, previousStatus)
+//
+//        return TrashBinResponseDto.from(bin)
+//    }
+//
+//    override fun markEmptied(id: Long): TrashBinResponseDto {
+//        val bin = repository.findByIdOrNull(id)
+//            ?: throw NotFoundException("TrashBin with id $id not found")
+//
+//        bin.markAsEmptied()
+//
+//        return TrashBinResponseDto.from(bin)
+//    }
+//
+//    override fun getById(id: Long): TrashBinResponseDto {
+//        val bin = repository.findByIdOrNull(id)
+//            ?: throw NotFoundException("TrashBin with id $id not found")
+//
+//        return TrashBinResponseDto.from(bin)
+//    }
+//
+//    override fun delete(id: Long) {
+//        val bin = repository.findByIdOrNull(id)
+//            ?: throw NotFoundException("TrashBin with id $id not found")
+//
+//        repository.delete(bin)
+//    }
+//
+//    override fun getAll(pageable: Pageable): Page<TrashBinResponseDto> {
+//
+//        val auth = SecurityContextHolder.getContext().authentication
+//        val username = auth!!.name
+//        val role = auth.authorities.first().authority
+//
+//        if (role == "ROLE_DRIVER") {
+//            val driver = userRepository.findByUsername(username)
+//                ?: throw RuntimeException("Driver not found")
+//
+//            return repository.findByDriver(driver, pageable)
+//                .map { TrashBinResponseDto.from(it) }
+//        }
+//
+//        return repository.findAll(pageable)
+//            .map { TrashBinResponseDto.from(it) }
+//    }
+//
+//    override fun updateFromAi(request: AiTrashBinRequest): TrashBinResponseDto {
+//
+//        val bin = repository.findByCameraId(request.cameraId)
+//            ?: throw RuntimeException("Trash bin not found")
+//
+//        // Fill level ni yangilaymiz
+//        val fillLevel = if (request.isFull) 95 else 10
+//        bin.updateFillLevel(fillLevel)
+//
+//        // 🔥 FAQAT AI FULL YUBORGANDA XABAR YUBORAMIZ
+//        if (request.isFull) {
+//
+//            val driver = bin.driver
+//            val chatId = driver?.telegramChatId
+//
+//            if (chatId != null) {
+//
+//                bin.fullDetectedAt = LocalDateTime.now()
+//                bin.acknowledged = false
+//                bin.escalatedToAdmin = false
+//                bin.escalatedToSuperAdmin = false
+//
+//                telegramService.sendFullBinNotification(
+//                    chatId = chatId,
+//                    binId = bin.id!!,
+//                    binName = bin.name,
+//                    fillLevel = bin.fillLevel,
+//                    lat = bin.latitude,
+//                    lon = bin.longitude
+//                )
+//
+//                println("✅ AI FULL — DRIVERGA XABAR YUBORILDI")
+//            } else {
+//                println("❌ Driver telegramChatId NULL")
+//            }
+//        }
+//
+//        return TrashBinResponseDto.from(bin)
+//    }
+//
+//    private fun checkAndNotifyIfFull(bin: TrashBin, previousStatus: BinStatus?) {
+//
+//        println("PREVIOUS STATUS: $previousStatus")
+//        println("NEW STATUS: ${bin.status}")
+//
+//        if (previousStatus == BinStatus.FULL) {
+//            println("❌ Old status FULL bo‘lgani uchun xabar yuborilmadi")
+//            return
+//        }
+//
+//        if (bin.status != BinStatus.FULL) {
+//            println("❌ Hali FULL emas")
+//            return
+//        }
+//
+//        val driver = bin.driver ?: return
+//        val chatId = driver.telegramChatId ?: return
+//
+//        bin.fullDetectedAt = LocalDateTime.now()
+//        bin.acknowledged = false
+//        bin.escalatedToAdmin = false
+//        bin.escalatedToSuperAdmin = false
+//
+//        telegramService.sendFullBinNotification(
+//            chatId = chatId,
+//            binId = bin.id!!,
+//            binName = bin.name,
+//            fillLevel = bin.fillLevel,
+//            lat = bin.latitude,
+//            lon = bin.longitude
+//        )
+//
+//        println("✅ DRIVERGA CHIROYLI XABAR YUBORILDI")
+//    }
+//}
 
 @Service
 class EscalationService(

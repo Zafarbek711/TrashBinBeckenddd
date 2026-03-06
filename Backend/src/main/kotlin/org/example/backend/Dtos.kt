@@ -20,7 +20,7 @@ data class TrashBinCreateDto(
     val longitude: Double,
     val fillLevel: Int,
     val cameraId: String,
-    val driverId: Long   // 🔥 QO‘SHILDI
+    val driverIds: List<Long> // 🔥 QO‘SHILDI
 )
 
 
@@ -121,5 +121,8 @@ data class LoginRequest(
 )
 
 data class LoginResponse(
-    val token: String
+    val ok: Boolean,
+    val token: String,
+    val username: String,
+    val role: String
 )

@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController
 import org.telegram.telegrambots.bots.TelegramLongPollingBot
 
 import jakarta.annotation.PostConstruct
+import org.springframework.data.repository.findByIdOrNull
 import org.telegram.telegrambots.meta.TelegramBotsApi
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage
 import org.telegram.telegrambots.updatesreceivers.DefaultBotSession
@@ -30,27 +31,33 @@ import org.telegram.telegrambots.meta.api.objects.Update
 @RequestMapping("/api/auth")
 class AuthController(
     private val authenticationManager: AuthenticationManager,
-    private val jwtUtil: JwtUtil
+    private val jwtUtil: JwtUtil,
+    private val userRepository: UserRepository
 ) {
 
     @PostMapping("/login")
     fun login(@RequestBody request: LoginRequest): LoginResponse {
-
-        val authentication = authenticationManager.authenticate(
+        authenticationManager.authenticate(
             UsernamePasswordAuthenticationToken(
                 request.username,
                 request.password
             )
         )
 
-        val user = authentication.principal as org.springframework.security.core.userdetails.User
+        val dbUser = userRepository.findByUsername(request.username)
+            ?: throw RuntimeException("User not found")
 
-        val role = user.authorities.first().authority!!.removePrefix("ROLE_")
+        val role = dbUser.role.name
+        val token = jwtUtil.generateToken(dbUser.username, role)
 
-        val token = jwtUtil.generateToken(user.username, role)
-
-        return LoginResponse(token)
+        return LoginResponse(
+            ok = true,
+            token = token,
+            username = dbUser.username,
+            role = role
+        )
     }
+
 }
 
 @RestController
@@ -133,6 +140,11 @@ class UserController(
     fun getById(@PathVariable id: Long) =
         ResponseEntity.ok(service.getById(id))
 
+    @GetMapping("/admins")
+    fun getAdmins(): List<UserResponseDto> {
+        return service.getAdmins()
+    }
+
     @PreAuthorize("hasRole('SUPER_ADMIN')")
     @DeleteMapping("/{id}")
     fun delete(@PathVariable id: Long): ResponseEntity<Void> {
@@ -164,14 +176,9 @@ class AiController(
 class MyTelegramBot(
     @Value("\${telegram.bot-token}")
     private val botToken: String,
-    private val userRepository: UserRepository
+    private val userRepository: UserRepository,
+    private val trashBinRepository: TrashBinRepository
 ) : TelegramLongPollingBot() {
-
-//    @PostConstruct
-//    fun init() {
-//        val botsApi = TelegramBotsApi(DefaultBotSession::class.java)
-//        botsApi.registerBot(this)
-//    }
 
     override fun getBotToken(): String = botToken
 
@@ -179,6 +186,47 @@ class MyTelegramBot(
 
     override fun onUpdateReceived(update: Update) {
 
+        // 🔹 QABUL QILDIM TUGMASI
+        if (update.hasCallbackQuery()) {
+
+            val data = update.callbackQuery.data
+            val chatId = update.callbackQuery.message.chatId.toString()
+
+            if (data.startsWith("ACK_")) {
+
+                val binId = data.removePrefix("ACK_").toLong()
+
+                val bin = trashBinRepository.findByIdOrNull(binId)
+
+                if (bin != null) {
+
+                    // agar boshqa driver allaqachon olgan bo‘lsa
+                    if (bin.acknowledged) {
+
+                        val msg = SendMessage(
+                            chatId,
+                            "❌ Bu chiqindi boshqa haydovchi tomonidan qabul qilingan"
+                        )
+
+                        execute(msg)
+                        return
+                    }
+
+                    // birinchi bosgan driver
+                    bin.acknowledged = true
+                    trashBinRepository.save(bin)
+
+                    val msg = SendMessage(
+                        chatId,
+                        "🚚 Haydovchi faol — yo‘lga chiqdi"
+                    )
+
+                    execute(msg)
+                }
+            }
+        }
+
+        // 🔹 /start komandasi
         if (update.hasMessage() && update.message.hasText()) {
 
             val text = update.message.text
@@ -193,11 +241,20 @@ class MyTelegramBot(
                     user.telegramChatId = chatId
                     userRepository.save(user)
 
-                    val msg = SendMessage(chatId, "✅ Siz tizimga muvaffaqiyatli ulandingiz!")
+                    val msg = SendMessage(
+                        chatId,
+                        "✅ Siz tizimga muvaffaqiyatli ulandingiz!"
+                    )
+
                     execute(msg)
 
                 } else {
-                    val msg = SendMessage(chatId, "❌ Siz tizimda ro‘yxatdan o‘tmagansiz.")
+
+                    val msg = SendMessage(
+                        chatId,
+                        "❌ Siz tizimda ro‘yxatdan o‘tmagansiz."
+                    )
+
                     execute(msg)
                 }
             }

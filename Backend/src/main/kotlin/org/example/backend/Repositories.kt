@@ -5,7 +5,9 @@ import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
 
 interface TrashBinRepository : JpaRepository<TrashBin, Long> {
-    fun findByDriver(driver: User, pageable: Pageable): Page<TrashBin>
+
+    fun findByDriversContaining(driver: User, pageable: Pageable): Page<TrashBin>
+
     fun findByCameraId(cameraId: String): TrashBin?
 }
 
