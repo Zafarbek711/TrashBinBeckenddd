@@ -51,6 +51,8 @@ interface DriverActionService {
 
     fun getDriverActions(driverId: Long): List<DriverActionResponseDto>
 
+    fun getAllDriverActions(): List<DriverActionResponseDto>
+
 }
 
 @Service
@@ -491,6 +493,12 @@ class DriverActionServiceImpl(
     override fun getDriverActions(driverId: Long): List<DriverActionResponseDto> {
 
         return driverActionRepository.findByDriverId(driverId)
+            .map { DriverActionResponseDto.from(it) }
+
+    }
+    override fun getAllDriverActions(): List<DriverActionResponseDto> {
+
+        return driverActionRepository.findAll()
             .map { DriverActionResponseDto.from(it) }
 
     }

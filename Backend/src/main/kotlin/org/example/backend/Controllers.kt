@@ -339,5 +339,9 @@ class StatisticsController(
         return driverActionService.getDriverActions(driverId)
 
     }
-}
 
+    @GetMapping("/drivers")
+    fun getAllDriverStatistics(): List<DriverActionResponseDto> {
+        return driverActionService.getAllDriverActions()
+    }
+}
