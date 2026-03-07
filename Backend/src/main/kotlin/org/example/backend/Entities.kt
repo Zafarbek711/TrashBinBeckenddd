@@ -138,5 +138,24 @@ class User(
 ) : BaseEntity()
 
 
+@Entity
+@Table(name = "driver_actions")
+class DriverAction(
+
+    @ManyToOne
+    @JoinColumn(name = "driver_id")
+    var driver: User,
+
+    @ManyToOne
+    @JoinColumn(name = "trashbin_id")
+    var trashBin: TrashBin,
+
+    var action: String, // ACCEPTED, EMPTIED
+
+    var createdAt: LocalDateTime = LocalDateTime.now()
+
+) : BaseEntity()
+
+
 
 

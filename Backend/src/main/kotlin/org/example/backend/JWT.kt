@@ -19,7 +19,7 @@ import org.springframework.web.filter.OncePerRequestFilter
 class JwtUtil {
 
     private val secretKey: SecretKey = Keys.secretKeyFor(SignatureAlgorithm.HS256)
-    private val expirationMs = 1000 * 60 * 60 // 1 soat
+    private val expirationMs = 1000 * 60 * 60 * 24 // 1 kun
 
     fun generateToken(username: String, role: String): String {
         return Jwts.builder()

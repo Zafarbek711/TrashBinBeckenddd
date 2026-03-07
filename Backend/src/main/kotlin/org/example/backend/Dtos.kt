@@ -31,6 +31,18 @@ data class TrashBinUpdateDto(
     @field:Min(0) @field:Max(100) val fillLevel: Int?,
 )
 
+data class DriverShortDto(
+    val id: Long,
+    val fullname: String
+) {
+    companion object {
+        fun from(entity: User) = DriverShortDto(
+            id = entity.id!!,
+            fullname = entity.fullname
+        )
+    }
+}
+
 data class TrashBinResponseDto(
     val id: Long,
     val name: String,
@@ -38,7 +50,8 @@ data class TrashBinResponseDto(
     val longitude: Double,
     val fillLevel: Int,
     val status: BinStatus,
-    val imageUrl: String?
+    val imageUrl: String?,
+    val drivers: List<DriverShortDto>
 ) {
     companion object {
         fun from(entity: TrashBin) = TrashBinResponseDto(
@@ -48,7 +61,8 @@ data class TrashBinResponseDto(
             longitude = entity.longitude,
             fillLevel = entity.fillLevel,
             status = entity.status,
-            imageUrl = entity.imageUrl
+            imageUrl = entity.imageUrl,
+            drivers = entity.drivers.map { DriverShortDto.from(it) }
         )
     }
 }
@@ -126,3 +140,28 @@ data class LoginResponse(
     val username: String,
     val role: String
 )
+
+
+data class DriverActionResponseDto(
+
+    val id: Long,
+    val driverId: Long,
+    val driverName: String,
+    val trashBinId: Long,
+    val trashBinName: String,
+    val action: String,
+    val createdAt: LocalDateTime
+
+) {
+    companion object {
+        fun from(entity: DriverAction) = DriverActionResponseDto(
+            id = entity.id!!,
+            driverId = entity.driver.id!!,
+            driverName = entity.driver.fullname,
+            trashBinId = entity.trashBin.id!!,
+            trashBinName = entity.trashBin.name,
+            action = entity.action,
+            createdAt = entity.createdAt
+        )
+    }
+}

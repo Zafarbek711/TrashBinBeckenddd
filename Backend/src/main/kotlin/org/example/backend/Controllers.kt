@@ -22,6 +22,7 @@ import org.telegram.telegrambots.bots.TelegramLongPollingBot
 import jakarta.annotation.PostConstruct
 import org.springframework.data.repository.findByIdOrNull
 import org.telegram.telegrambots.meta.TelegramBotsApi
+import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage
 import org.telegram.telegrambots.updatesreceivers.DefaultBotSession
 import org.telegram.telegrambots.meta.api.objects.Update
@@ -176,8 +177,12 @@ class AiController(
 class MyTelegramBot(
     @Value("\${telegram.bot-token}")
     private val botToken: String,
+
     private val userRepository: UserRepository,
-    private val trashBinRepository: TrashBinRepository
+    private val trashBinRepository: TrashBinRepository,
+    private val driverActionRepository: DriverActionRepository,
+    private val telegramService: TelegramService
+
 ) : TelegramLongPollingBot() {
 
     override fun getBotToken(): String = botToken
@@ -192,7 +197,12 @@ class MyTelegramBot(
             val data = update.callbackQuery.data
             val chatId = update.callbackQuery.message.chatId.toString()
 
+
             if (data.startsWith("ACK_")) {
+
+                val callback = AnswerCallbackQuery()
+                callback.callbackQueryId = update.callbackQuery.id
+                execute(callback)
 
                 val binId = data.removePrefix("ACK_").toLong()
 
@@ -216,12 +226,63 @@ class MyTelegramBot(
                     bin.acknowledged = true
                     trashBinRepository.save(bin)
 
+                    val user = userRepository.findByTelegramChatId(chatId)
+                    if (user != null) {
+
+                        driverActionRepository.save(
+                            DriverAction(
+                                driver = user,
+                                trashBin = bin,
+                                action = "ACCEPTED"
+                            )
+                        )
+                    }
+
                     val msg = SendMessage(
                         chatId,
                         "🚚 Haydovchi faol — yo‘lga chiqdi"
                     )
 
                     execute(msg)
+                }
+            }
+            if (data.startsWith("PROBLEM_")) {
+
+                val binId = data.removePrefix("PROBLEM_").toLong()
+
+                val bin = trashBinRepository.findByIdOrNull(binId)
+
+                if (bin != null) {
+
+                    // qayta ochamiz
+                    bin.acknowledged = false
+                    trashBinRepository.save(bin)
+
+                    // driverga javob
+                    val msg = SendMessage(
+                        chatId,
+                        "⚠️ Muammo qayd etildi.\nBoshqa haydovchilarga yuborilmoqda."
+                    )
+
+                    execute(msg)
+
+                    // boshqa driverlarga qayta yuborish
+                    bin.drivers.forEach { driver ->
+
+                        val otherChatId = driver.telegramChatId
+
+                        if (otherChatId != null && otherChatId != chatId) {
+
+                            telegramService.sendFullBinNotification(
+                                chatId = otherChatId,
+                                binId = bin.id!!,
+                                binName = bin.name,
+                                fillLevel = bin.fillLevel,
+                                lat = bin.latitude,
+                                lon = bin.longitude
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -259,6 +320,24 @@ class MyTelegramBot(
                 }
             }
         }
+    }
+}
+
+@RestController
+@RequestMapping("/api/statistics")
+class StatisticsController(
+
+    private val driverActionService: DriverActionService
+
+) {
+
+    @GetMapping("/driver/{driverId}")
+    fun getDriverStatistics(
+        @PathVariable driverId: Long
+    ): List<DriverActionResponseDto> {
+
+        return driverActionService.getDriverActions(driverId)
+
     }
 }
 
