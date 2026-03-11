@@ -89,7 +89,7 @@ class TrashbinController(
     fun getById(@PathVariable id: Long) =
         ResponseEntity.ok(service.getById(id))
 
-    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN','ADMIN')")
     @DeleteMapping("/{id}")
     fun delete(@PathVariable id: Long): ResponseEntity<Void> {
         service.delete(id)
@@ -116,14 +116,11 @@ class UserController(
     private val userRepository: UserRepository
 ) {
 
-    // Faqat SUPER_ADMIN user yaratadi
-    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN','ADMIN')")
     @PostMapping
     fun create(@Valid @RequestBody request: UserCreateDto) =
         ResponseEntity.status(201).body(service.create(request))
 
-    // SUPER_ADMIN hamma update qiladi
-    // ADMIN faqat DRIVER ni update qila oladi
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','ADMIN')")
     @PutMapping("/{id}")
     fun update(
@@ -131,12 +128,12 @@ class UserController(
         @Valid @RequestBody request: UserUpdateDto
     ) = ResponseEntity.ok(service.update(id, request))
 
-    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN','ADMIN')")
     @GetMapping
     fun getAll(pageable: Pageable) =
         ResponseEntity.ok(service.getAll(pageable))
 
-    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN','ADMIN')")
     @GetMapping("/{id}")
     fun getById(@PathVariable id: Long) =
         ResponseEntity.ok(service.getById(id))
@@ -146,12 +143,13 @@ class UserController(
         return service.getAdmins()
     }
 
-    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN','ADMIN')")
     @DeleteMapping("/{id}")
     fun delete(@PathVariable id: Long): ResponseEntity<Void> {
         service.delete(id)
         return ResponseEntity.noContent().build()
     }
+
     @GetMapping("/drivers")
     fun getDrivers(): List<UserResponseDto> {
         return userRepository.findByRole(Role.DRIVER)
@@ -206,82 +204,88 @@ class MyTelegramBot(
 
                 val binId = data.removePrefix("ACK_").toLong()
 
-                val bin = trashBinRepository.findByIdOrNull(binId)
+                synchronized(this) {
 
-                if (bin != null) {
+                    val bin = trashBinRepository.findByIdOrNull(binId)
 
-                    // agar boshqa driver allaqachon olgan bo‘lsa
-                    if (bin.acknowledged) {
+                    if (bin != null) {
 
-                        val msg = SendMessage(
-                            chatId,
-                            "❌ Bu chiqindi boshqa haydovchi tomonidan qabul qilingan"
-                        )
+                        // agar boshqa driver olib bo‘lgan bo‘lsa
+                        if (bin.acknowledged) {
 
-                        execute(msg)
-                        return
-                    }
+                            execute(
+                                SendMessage(
+                                    chatId,
+                                    "❌ Bu chiqindi boshqa haydovchi tomonidan qabul qilingan"
+                                )
+                            )
+                            return
+                        }
 
-                    // birinchi bosgan driver
-                    bin.acknowledged = true
-                    trashBinRepository.save(bin)
+                        // faqat 1 driver oladi
+                        bin.acknowledged = true
+                        trashBinRepository.save(bin)
 
-                    val user = userRepository.findByTelegramChatId(chatId)
-                    if (user != null) {
+                        val user = userRepository.findByTelegramChatId(chatId)
 
-                        driverActionRepository.save(
-                            DriverAction(
-                                driver = user,
-                                trashBin = bin,
-                                action = "ACCEPTED"
+                        if (user != null) {
+
+                            driverActionRepository.save(
+                                DriverAction(
+                                    driver = user,
+                                    trashBin = bin,
+                                    action = "ACCEPTED"
+                                )
+                            )
+                        }
+
+                        execute(
+                            SendMessage(
+                                chatId,
+                                "🚚 Haydovchi faol — yo‘lga chiqdi"
                             )
                         )
                     }
-
-                    val msg = SendMessage(
-                        chatId,
-                        "🚚 Haydovchi faol — yo‘lga chiqdi"
-                    )
-
-                    execute(msg)
                 }
             }
             if (data.startsWith("PROBLEM_")) {
 
+                val callback = AnswerCallbackQuery()
+                callback.callbackQueryId = update.callbackQuery.id
+                execute(callback)
+
                 val binId = data.removePrefix("PROBLEM_").toLong()
 
-                val bin = trashBinRepository.findByIdOrNull(binId)
+                val bin = trashBinRepository.findByIdOrNull(binId) ?: return
 
-                if (bin != null) {
+                // binni qayta ochish
+                bin.acknowledged = false
+                trashBinRepository.save(bin)
 
-                    // qayta ochamiz
-                    bin.acknowledged = false
-                    trashBinRepository.save(bin)
-
-                    // driverga javob
-                    val msg = SendMessage(
+                execute(
+                    SendMessage(
                         chatId,
-                        "⚠️ Muammo qayd etildi.\nBoshqa haydovchilarga yuborilmoqda."
+                        "⚠️ Muammo qayd etildi. Boshqa haydovchilarga yuborilmoqda."
                     )
+                )
 
-                    execute(msg)
+                // 🔥 binni qayta DB dan olish (MUHIM)
+                val freshBin = trashBinRepository.findByIdOrNull(binId) ?: return
 
-                    // boshqa driverlarga qayta yuborish
-                    bin.drivers.forEach { driver ->
+                freshBin.drivers.forEach { driver ->
 
-                        val otherChatId = driver.telegramChatId
+                    val driverChatId = driver.telegramChatId
 
-                        if (otherChatId != null && otherChatId != chatId) {
+                    if (driverChatId != null && driverChatId != chatId) {
 
-                            telegramService.sendFullBinNotification(
-                                chatId = otherChatId,
-                                binId = bin.id!!,
-                                binName = bin.name,
-                                fillLevel = bin.fillLevel,
-                                lat = bin.latitude,
-                                lon = bin.longitude
-                            )
-                        }
+                        telegramService.sendFullBinNotification(
+                            chatId = driverChatId,
+                            binId = freshBin.id!!,
+                            binName = freshBin.name,
+                            fillLevel = freshBin.fillLevel,
+                            lat = freshBin.latitude,
+                            lon = freshBin.longitude
+                        )
                     }
                 }
             }

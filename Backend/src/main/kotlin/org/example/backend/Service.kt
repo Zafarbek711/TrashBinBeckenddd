@@ -27,7 +27,7 @@ interface TrashBinService {
     fun update(id: Long, request: TrashBinUpdateDto): TrashBinResponseDto
     fun updateFillLevel(id: Long, fillLevel: Int): TrashBinResponseDto
 
-    //   fun markInProgress(id: Long): TrashBinResponseDto
+
     fun markEmptied(id: Long): TrashBinResponseDto
     fun getAll(pageable: Pageable): Page<TrashBinResponseDto>
     fun getById(id: Long): TrashBinResponseDto
@@ -180,7 +180,9 @@ class EmailService(
 @Transactional
 class UserServiceImpl(
     private val repository: UserRepository,
-    private val passwordEncoder: PasswordEncoder
+    private val passwordEncoder: PasswordEncoder,
+    private val trashBinRepository: TrashBinRepository,
+    private val driverActionRepository: DriverActionRepository
 ) : UserService {
     override fun create(request: UserCreateDto): UserResponseDto {
         val user = request.toUserEntity()
@@ -230,8 +232,19 @@ class UserServiceImpl(
     }
 
     override fun delete(id: Long) {
+
         val user = repository.findByIdOrNull(id)
             ?: throw NotFoundException("User with id $id not found")
+
+        // trashbinlardan driverni olib tashlash
+        trashBinRepository.findAll().forEach {
+            it.drivers.remove(user)
+        }
+
+        // driver actionlarni o‘chirish
+        driverActionRepository.deleteByDriverId(id)
+
+        // userni o‘chirish
         repository.delete(user)
     }
 
@@ -283,13 +296,22 @@ class TrashBinServiceImpl(
         request.latitude?.let { bin.latitude = it }
         request.longitude?.let { bin.longitude = it }
 
+        // 🔥 DRIVERLARNI UPDATE QILISH
+        request.driverIds?.let {
+
+            val drivers = userRepository.findAllById(it)
+
+            bin.drivers.clear()
+            bin.drivers.addAll(drivers)
+        }
+
         request.fillLevel?.let {
             val previousStatus = bin.status
             bin.updateFillLevel(it)
             checkAndNotifyIfFull(bin, previousStatus)
         }
 
-        return TrashBinResponseDto.from(bin)
+        return TrashBinResponseDto.from(repository.save(bin))
     }
 
     override fun updateFillLevel(id: Long, fillLevel: Int): TrashBinResponseDto {
@@ -356,6 +378,9 @@ class TrashBinServiceImpl(
         val fillLevel = if (request.isFull) 95 else 10
         bin.updateFillLevel(fillLevel)
 
+        // 🔥 AI yuborgan rasmni saqlaymiz
+        bin.imageBase64 = request.imageBase64
+
         if (request.isFull) {
 
             bin.drivers.forEach { driver ->
@@ -380,6 +405,9 @@ class TrashBinServiceImpl(
                 }
             }
         }
+
+        // 🔥 DB ga saqlaymiz
+        repository.save(bin)
 
         return TrashBinResponseDto.from(bin)
     }
@@ -496,6 +524,7 @@ class DriverActionServiceImpl(
             .map { DriverActionResponseDto.from(it) }
 
     }
+
     override fun getAllDriverActions(): List<DriverActionResponseDto> {
 
         return driverActionRepository.findAll()

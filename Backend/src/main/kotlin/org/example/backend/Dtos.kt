@@ -29,6 +29,7 @@ data class TrashBinUpdateDto(
     var latitude: Double?,
     var longitude: Double?,
     @field:Min(0) @field:Max(100) val fillLevel: Int?,
+    val driverIds: List<Long>? = null
 )
 
 data class DriverShortDto(

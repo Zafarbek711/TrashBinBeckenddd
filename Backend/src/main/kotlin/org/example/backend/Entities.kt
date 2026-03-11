@@ -74,6 +74,9 @@ class TrashBin(
     @Column
     var imageUrl: String? = null,
 
+    @Column(columnDefinition = "TEXT")
+    var imageBase64: String? = null,
+
     @ManyToMany(fetch = FetchType.LAZY)
     @JoinTable(
         name = "trashbin_drivers",
