@@ -52,6 +52,7 @@ data class TrashBinResponseDto(
     val fillLevel: Int,
     val status: BinStatus,
     val imageUrl: String?,
+    val imageBase64: String?,
     val drivers: List<DriverShortDto>
 ) {
     companion object {
@@ -63,6 +64,7 @@ data class TrashBinResponseDto(
             fillLevel = entity.fillLevel,
             status = entity.status,
             imageUrl = entity.imageUrl,
+            imageBase64 = entity.imageBase64,
             drivers = entity.drivers.map { DriverShortDto.from(it) }
         )
     }
