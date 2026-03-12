@@ -18,14 +18,12 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 import org.telegram.telegrambots.bots.TelegramLongPollingBot
-
-import jakarta.annotation.PostConstruct
 import org.springframework.data.repository.findByIdOrNull
-import org.telegram.telegrambots.meta.TelegramBotsApi
 import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage
-import org.telegram.telegrambots.updatesreceivers.DefaultBotSession
 import org.telegram.telegrambots.meta.api.objects.Update
+import org.springframework.http.MediaType
+import java.util.Base64
 
 
 @RestController
@@ -64,7 +62,8 @@ class AuthController(
 @RestController
 @RequestMapping("/api/trashbins")
 class TrashbinController(
-    private val service: TrashBinService
+    private val service: TrashBinService,
+    private val trashBinRepository: TrashBinRepository
 ) {
 
     @PreAuthorize("hasAnyRole('SUPER_ADMIN','ADMIN')")
@@ -107,6 +106,21 @@ class TrashbinController(
     @PutMapping("/{id}/emptied")
     fun markEmptied(@PathVariable id: Long) =
         ResponseEntity.ok(service.markEmptied(id))
+
+    @GetMapping("/{id}/image")
+    fun getImage(@PathVariable id: Long): ResponseEntity<ByteArray> {
+
+        val bin = trashBinRepository.findByIdOrNull(id)
+            ?: return ResponseEntity.notFound().build()
+
+        val imageBase64 = bin.imageBase64 ?: return ResponseEntity.notFound().build()
+
+        val imageBytes = Base64.getDecoder().decode(imageBase64)
+
+        return ResponseEntity.ok()
+            .contentType(MediaType.IMAGE_JPEG)
+            .body(imageBytes)
+    }
 }
 
 @RestController
@@ -175,7 +189,6 @@ class AiController(
 class MyTelegramBot(
     @Value("\${telegram.bot-token}")
     private val botToken: String,
-
     private val userRepository: UserRepository,
     private val trashBinRepository: TrashBinRepository,
     private val driverActionRepository: DriverActionRepository,
@@ -188,13 +201,13 @@ class MyTelegramBot(
     override fun getBotUsername(): String = "obodshahar_bot"
 
     override fun onUpdateReceived(update: Update) {
+        println("UPDATE: $update")
 
         // 🔹 QABUL QILDIM TUGMASI
         if (update.hasCallbackQuery()) {
 
             val data = update.callbackQuery.data
             val chatId = update.callbackQuery.message.chatId.toString()
-
 
             if (data.startsWith("ACK_")) {
 
@@ -206,48 +219,97 @@ class MyTelegramBot(
 
                 synchronized(this) {
 
-                    val bin = trashBinRepository.findByIdOrNull(binId)
+                    val bin = trashBinRepository.findByIdForUpdate(binId) ?: return
 
-                    if (bin != null) {
-
-                        // agar boshqa driver olib bo‘lgan bo‘lsa
-                        if (bin.acknowledged) {
-
-                            execute(
-                                SendMessage(
-                                    chatId,
-                                    "❌ Bu chiqindi boshqa haydovchi tomonidan qabul qilingan"
-                                )
-                            )
-                            return
-                        }
-
-                        // faqat 1 driver oladi
-                        bin.acknowledged = true
-                        trashBinRepository.save(bin)
-
-                        val user = userRepository.findByTelegramChatId(chatId)
-
-                        if (user != null) {
-
-                            driverActionRepository.save(
-                                DriverAction(
-                                    driver = user,
-                                    trashBin = bin,
-                                    action = "ACCEPTED"
-                                )
-                            )
-                        }
+                    if (bin.acknowledged) {
 
                         execute(
                             SendMessage(
                                 chatId,
-                                "🚚 Haydovchi faol — yo‘lga chiqdi"
+                                "❌ Bu chiqindi boshqa haydovchi tomonidan qabul qilingan"
+                            )
+                        )
+                        return
+                    }
+
+                    bin.acknowledged = true
+                    trashBinRepository.save(bin)
+
+                    val user = userRepository.findByTelegramChatId(chatId)
+
+                    if (user != null) {
+
+                        driverActionRepository.save(
+                            DriverAction(
+                                driver = user,
+                                trashBin = bin,
+                                action = "ACCEPTED"
                             )
                         )
                     }
+
+                    execute(
+                        SendMessage(
+                            chatId,
+                            "🚚 Haydovchi faol — yo‘lga chiqdi"
+                        )
+                    )
                 }
             }
+
+
+//            if (data.startsWith("ACK_")) {
+//
+//                val callback = AnswerCallbackQuery()
+//                callback.callbackQueryId = update.callbackQuery.id
+//                execute(callback)
+//
+//                val binId = data.removePrefix("ACK_").toLong()
+//
+//                synchronized(this) {
+//
+//                    val bin = trashBinRepository.findByIdOrNull(binId)
+//
+//                    if (bin != null) {
+//
+//                        // agar boshqa driver olib bo‘lgan bo‘lsa
+//                        if (bin.acknowledged) {
+//
+//                            execute(
+//                                SendMessage(
+//                                    chatId,
+//                                    "❌ Bu chiqindi boshqa haydovchi tomonidan qabul qilingan"
+//                                )
+//                            )
+//                            return
+//                        }
+//
+//                        // faqat 1 driver oladi
+//                        bin.acknowledged = true
+//                        trashBinRepository.save(bin)
+//
+//                        val user = userRepository.findByTelegramChatId(chatId)
+//
+//                        if (user != null) {
+//
+//                            driverActionRepository.save(
+//                                DriverAction(
+//                                    driver = user,
+//                                    trashBin = bin,
+//                                    action = "ACCEPTED"
+//                                )
+//                            )
+//                        }
+//
+//                        execute(
+//                            SendMessage(
+//                                chatId,
+//                                "🚚 Haydovchi faol — yo‘lga chiqdi"
+//                            )
+//                        )
+//                    }
+//                }
+//            }
             if (data.startsWith("PROBLEM_")) {
 
                 val callback = AnswerCallbackQuery()
@@ -269,10 +331,10 @@ class MyTelegramBot(
                     )
                 )
 
-                // 🔥 binni qayta DB dan olish (MUHIM)
-                val freshBin = trashBinRepository.findByIdOrNull(binId) ?: return
+                // 🔥 driverlarni repository orqali olish
+                val drivers = userRepository.findDriversByTrashBinId(binId)
 
-                freshBin.drivers.forEach { driver ->
+                drivers.forEach { driver ->
 
                     val driverChatId = driver.telegramChatId
 
@@ -280,15 +342,56 @@ class MyTelegramBot(
 
                         telegramService.sendFullBinNotification(
                             chatId = driverChatId,
-                            binId = freshBin.id!!,
-                            binName = freshBin.name,
-                            fillLevel = freshBin.fillLevel,
-                            lat = freshBin.latitude,
-                            lon = freshBin.longitude
+                            binId = bin.id!!,
+                            binName = bin.name,
+                            fillLevel = bin.fillLevel,
+                            lat = bin.latitude,
+                            lon = bin.longitude
                         )
                     }
                 }
             }
+//            if (data.startsWith("PROBLEM_")) {
+//
+//                val callback = AnswerCallbackQuery()
+//                callback.callbackQueryId = update.callbackQuery.id
+//                execute(callback)
+//
+//                val binId = data.removePrefix("PROBLEM_").toLong()
+//
+//                val bin = trashBinRepository.findByIdOrNull(binId) ?: return
+//
+//                // binni qayta ochish
+//                bin.acknowledged = false
+//                trashBinRepository.save(bin)
+//
+//                execute(
+//                    SendMessage(
+//                        chatId,
+//                        "⚠️ Muammo qayd etildi. Boshqa haydovchilarga yuborilmoqda."
+//                    )
+//                )
+//
+//                // 🔥 binni qayta DB dan olish (MUHIM)
+//                val freshBin = trashBinRepository.findByIdOrNull(binId) ?: return
+//
+//                freshBin.drivers.forEach { driver ->
+//
+//                    val driverChatId = driver.telegramChatId
+//
+//                    if (driverChatId != null && driverChatId != chatId) {
+//
+//                        telegramService.sendFullBinNotification(
+//                            chatId = driverChatId,
+//                            binId = freshBin.id!!,
+//                            binName = freshBin.name,
+//                            fillLevel = freshBin.fillLevel,
+//                            lat = freshBin.latitude,
+//                            lon = freshBin.longitude
+//                        )
+//                    }
+//                }
+//            }
         }
 
         // 🔹 /start komandasi
@@ -308,7 +411,7 @@ class MyTelegramBot(
 
                     val msg = SendMessage(
                         chatId,
-                        "✅ Siz tizimga muvaffaqiyatli ulandingiz!"
+                        "✅ Siz ${user.role} sifatida tizimga ulandingiz."
                     )
 
                     execute(msg)
